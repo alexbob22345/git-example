@@ -16,11 +16,15 @@ On launch the app reads `*.desktop` files in `/usr/share/xsessions` (shown as X1
 
 Pick a session and press **Switch**, then confirm.
 
-Switch writes that session's id — the desktop file name without `.desktop` — to `~/.dmrc` as `Session=` under `[Desktop]`. Other lines in the file, such as `Language=`, are left in place. LightDM and other display managers that read `~/.dmrc` use that value at the next login.
+Switch writes the session id — the desktop file name without `.desktop` — where each display manager reads it:
 
-The same choice is saved in `~/.config/change_gui/selection.json` (or `$XDG_CONFIG_HOME/change_gui/selection.json`) so the current selection is still marked when you open the app again.
+- LightDM: `Session=` under `[Desktop]` in `~/.dmrc`. Other lines, such as `Language=`, stay in place.
+- GDM: `Session`, `XSession`, and `SessionType` (`x11` or `wayland`) on the AccountsService user, via the system bus when the user is allowed to change their own account. The cache file is `/var/lib/AccountsService/users/<name>`.
+- SDDM has no per-user session file. Its machine-wide `/var/lib/sddm/state.conf` is left unchanged.
 
-Switch does not log you out and does not reboot. The AccountsService cache that GDM uses is not modified.
+The same choice is saved in `~/.config/change_gui/selection.json` (or `$XDG_CONFIG_HOME/change_gui/selection.json`) so the current selection stays marked when you open the app again. The window lists each file that was written.
+
+Switch does not log you out and does not reboot. Log out and back in for the login screen to start the session you confirmed.
 
 ## Release bundle
 

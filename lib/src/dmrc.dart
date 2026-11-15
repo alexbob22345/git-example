@@ -35,65 +35,81 @@ String? readDmrcSessionId(String contents) {
 /// Sets `Session=` inside `[Desktop]`, preserving every other line.
 ///
 /// Creates the section when the file is missing or has no `[Desktop]` group.
-/// Display managers such as LightDM read this key at the next login.
+/// LightDM reads this key at the next login.
 String upsertDmrcSession(String existing, String sessionId) {
   if (!isSafeSessionId(sessionId)) {
     throw FormatException('Refusing to write unsafe session id.');
   }
+  return upsertIniSection(
+    existing,
+    section: 'Desktop',
+    keys: {'Session': sessionId},
+  );
+}
+
+/// Sets keys inside one ini section, preserving every other line.
+String upsertIniSection(
+  String existing, {
+  required String section,
+  required Map<String, String> keys,
+}) {
   final newline = existing.contains('\r\n') ? '\r\n' : '\n';
   final lines = existing.replaceAll('\r\n', '\n').split('\n');
   if (lines.isNotEmpty && lines.last.isEmpty) {
     lines.removeLast();
   }
 
-  final sessionLine = 'Session=$sessionId';
-  var desktopStart = -1;
+  final wanted = keys.entries.toList();
+  var sectionStart = -1;
   for (var i = 0; i < lines.length; i++) {
-    if (_sectionName(lines[i]) == 'desktop') {
-      desktopStart = i;
+    if (_sectionName(lines[i]) == section.toLowerCase()) {
+      sectionStart = i;
       break;
     }
   }
 
-  if (desktopStart == -1) {
+  if (sectionStart == -1) {
     if (lines.isNotEmpty && lines.last.trim().isNotEmpty) {
       lines.add('');
     }
-    lines
-      ..add('[Desktop]')
-      ..add(sessionLine);
-  } else {
-    var sectionEnd = lines.length;
-    for (var i = desktopStart + 1; i < lines.length; i++) {
-      if (_sectionName(lines[i]) != null) {
-        sectionEnd = i;
-        break;
-      }
+    lines.add('[$section]');
+    for (final entry in wanted) {
+      lines.add('${entry.key}=${entry.value}');
     }
-    var replaced = false;
-    for (var i = desktopStart + 1; i < sectionEnd; i++) {
-      final trimmed = lines[i].trim();
-      if (trimmed.isEmpty ||
-          trimmed.startsWith('#') ||
-          trimmed.startsWith(';')) {
-        continue;
-      }
-      final eq = trimmed.indexOf('=');
-      if (eq <= 0) {
-        continue;
-      }
-      final key = trimmed.substring(0, eq).trim().toLowerCase();
-      if (key == 'session') {
-        lines[i] = sessionLine;
-        replaced = true;
-        break;
-      }
-    }
-    if (!replaced) {
-      lines.insert(sectionEnd, sessionLine);
+    return '${lines.join(newline)}$newline';
+  }
+
+  var sectionEnd = lines.length;
+  for (var i = sectionStart + 1; i < lines.length; i++) {
+    if (_sectionName(lines[i]) != null) {
+      sectionEnd = i;
+      break;
     }
   }
 
+  final remaining = {
+    for (final entry in wanted) entry.key.toLowerCase(): entry,
+  };
+  for (var i = sectionStart + 1; i < sectionEnd; i++) {
+    final trimmed = lines[i].trim();
+    if (trimmed.isEmpty || trimmed.startsWith('#') || trimmed.startsWith(';')) {
+      continue;
+    }
+    final eq = trimmed.indexOf('=');
+    if (eq <= 0) {
+      continue;
+    }
+    final key = trimmed.substring(0, eq).trim().toLowerCase();
+    final replacement = remaining.remove(key);
+    if (replacement != null) {
+      lines[i] = '${replacement.key}=${replacement.value}';
+    }
+  }
+  var insertAt = sectionEnd;
+  for (final entry in remaining.values) {
+    lines.insert(insertAt, '${entry.key}=${entry.value}');
+    insertAt++;
+  }
   return '${lines.join(newline)}$newline';
 }
 

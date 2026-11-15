@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'accounts_service.dart';
+import 'accounts_user.dart';
 import 'desktop_session.dart';
 import 'dmrc.dart';
 
@@ -66,12 +68,18 @@ class SwitchResult {
     required this.dmrcPath,
     required this.appStatePath,
     required this.sessionLine,
+    required this.reports,
+    this.dmrcWritten = true,
+    this.accountsUpdated = false,
   });
 
   final DesktopSession session;
   final String dmrcPath;
   final String appStatePath;
   final String sessionLine;
+  final List<String> reports;
+  final bool dmrcWritten;
+  final bool accountsUpdated;
 }
 
 /// Installed sessions plus the choice already stored for the next login.
@@ -82,12 +90,16 @@ class SessionSnapshot {
     required this.appStatePath,
     this.saved,
     this.dmrcSessionId,
+    this.accountsSessionId,
+    this.accountsSessionType,
     this.warning,
   });
 
   final List<DesktopSession> sessions;
   final SavedChoice? saved;
   final String? dmrcSessionId;
+  final String? accountsSessionId;
+  final String? accountsSessionType;
   final String dmrcPath;
   final String appStatePath;
   final String? warning;
@@ -109,12 +121,17 @@ class FilesystemSessionRepository implements SessionRepository {
     String? appStatePath,
     String? locale,
     DateTime Function()? clock,
+    AccountsSessionPort? accounts,
+    bool Function()? sddmStateExists,
+    this.sddmStatePath = kSddmStatePath,
   }) : x11Directories = x11Directories ?? kX11SessionDirectories,
        waylandDirectories = waylandDirectories ?? kWaylandSessionDirectories,
        dmrcPath = dmrcPath ?? defaultDmrcPath(),
        appStatePath = appStatePath ?? defaultAppStatePath(),
        locale = locale ?? Platform.localeName,
-       clock = clock ?? DateTime.now;
+       clock = clock ?? DateTime.now,
+       accounts = accounts ?? DbusAccountsSessionPort(),
+       sddmStateExists = sddmStateExists ?? _defaultSddmStateExists;
 
   final List<String> x11Directories;
   final List<String> waylandDirectories;
@@ -122,17 +139,35 @@ class FilesystemSessionRepository implements SessionRepository {
   final String appStatePath;
   final String locale;
   final DateTime Function() clock;
+  final AccountsSessionPort accounts;
+  final bool Function() sddmStateExists;
+  final String sddmStatePath;
+
+  static bool _defaultSddmStateExists() {
+    return File(kSddmStatePath).existsSync() ||
+        File('/usr/bin/sddm').existsSync();
+  }
 
   @override
   Future<SessionSnapshot> load() async {
     final sessions = await scan();
     String? warning;
     String? dmrcSessionId;
+    String? accountsSessionId;
+    String? accountsSessionType;
     SavedChoice? saved;
     try {
       dmrcSessionId = await readDmrcSession();
     } on IOException catch (error) {
       warning = 'Could not read $dmrcPath ($error).';
+    }
+    try {
+      final accountsState = await accounts.read();
+      accountsSessionId = accountsState?.session;
+      accountsSessionType = accountsState?.sessionType;
+    } on IOException catch (error) {
+      final note = 'Could not read the AccountsService session ($error).';
+      warning = warning == null ? note : '$warning $note';
     }
     try {
       saved = await readSavedChoice();
@@ -144,6 +179,8 @@ class FilesystemSessionRepository implements SessionRepository {
       sessions: sessions,
       saved: saved,
       dmrcSessionId: dmrcSessionId,
+      accountsSessionId: accountsSessionId,
+      accountsSessionType: accountsSessionType,
       dmrcPath: dmrcPath,
       appStatePath: appStatePath,
       warning: warning,
@@ -187,12 +224,30 @@ class FilesystemSessionRepository implements SessionRepository {
     if (!isSafeSessionId(session.id)) {
       throw FormatException('Refusing to write unsafe session id.');
     }
-    final dmrcFile = File(dmrcPath);
-    final existing = await dmrcFile.exists()
-        ? await dmrcFile.readAsString()
-        : '';
-    final updated = upsertDmrcSession(existing, session.id);
-    await _writeAtomic(dmrcFile, updated);
+    final reports = <String>[];
+    var dmrcWritten = false;
+    try {
+      final dmrcFile = File(dmrcPath);
+      final existing = await dmrcFile.exists()
+          ? await dmrcFile.readAsString()
+          : '';
+      final updated = upsertDmrcSession(existing, session.id);
+      await _writeAtomic(dmrcFile, updated);
+      dmrcWritten = true;
+      reports.add('Wrote Session=${session.id} to $dmrcPath for LightDM.');
+    } on IOException catch (error) {
+      reports.add('Could not write $dmrcPath for LightDM: $error');
+    }
+
+    final accountsResult = await accounts.write(
+      sessionId: session.id,
+      type: session.type,
+    );
+    reports.add(accountsResult.message);
+
+    if (sddmStateExists()) {
+      reports.add(sddmUnchangedNote(sddmStatePath));
+    }
 
     final choice = SavedChoice(
       sessionId: session.id,
@@ -204,12 +259,18 @@ class FilesystemSessionRepository implements SessionRepository {
     final stateFile = File(appStatePath);
     final encoded = const JsonEncoder.withIndent('  ').convert(choice.toJson());
     await _writeAtomic(stateFile, '$encoded\n');
+    reports.add(
+      'Saved ${session.name} (${session.type.label}) in $appStatePath.',
+    );
 
     return SwitchResult(
       session: session,
       dmrcPath: dmrcPath,
       appStatePath: appStatePath,
       sessionLine: 'Session=${session.id}',
+      reports: reports,
+      dmrcWritten: dmrcWritten,
+      accountsUpdated: accountsResult.succeeded,
     );
   }
 
@@ -266,6 +327,14 @@ class FilesystemSessionRepository implements SessionRepository {
 
 /// Session that should appear selected when the window opens.
 DesktopSession? initialSelection(SessionSnapshot snapshot) {
+  final accountsMatch = _matchSession(
+    snapshot.sessions,
+    snapshot.accountsSessionId,
+    snapshot.accountsSessionType,
+  );
+  if (accountsMatch != null) {
+    return accountsMatch;
+  }
   final saved = snapshot.saved;
   if (saved != null) {
     for (final session in snapshot.sessions) {
@@ -274,15 +343,27 @@ DesktopSession? initialSelection(SessionSnapshot snapshot) {
       }
     }
   }
-  final dmrcId = snapshot.dmrcSessionId;
-  if (dmrcId == null) {
+  return _matchSession(snapshot.sessions, snapshot.dmrcSessionId, null);
+}
+
+DesktopSession? _matchSession(
+  List<DesktopSession> sessions,
+  String? id,
+  String? sessionType,
+) {
+  if (id == null) {
     return null;
   }
-  final matches = snapshot.sessions
-      .where((session) => session.id == dmrcId)
-      .toList();
+  final matches = sessions.where((session) => session.id == id).toList();
   if (matches.isEmpty) {
     return null;
+  }
+  if (sessionType == 'wayland' || sessionType == 'x11') {
+    for (final session in matches) {
+      if (accountsSessionType(session.type) == sessionType) {
+        return session;
+      }
+    }
   }
   for (final session in matches) {
     if (session.type == SessionType.wayland) {
@@ -294,11 +375,17 @@ DesktopSession? initialSelection(SessionSnapshot snapshot) {
 
 String describeSnapshot(SessionSnapshot snapshot) {
   final parts = <String>[];
+  final accountsId = snapshot.accountsSessionId;
+  if (accountsId != null) {
+    final type = snapshot.accountsSessionType;
+    final typeNote = type == null ? '' : ' ($type)';
+    parts.add('GDM next login is Session=$accountsId$typeNote.');
+  }
   final dmrcId = snapshot.dmrcSessionId;
   if (dmrcId == null) {
     parts.add('No Session= entry in ${snapshot.dmrcPath} yet.');
   } else {
-    parts.add('Next login in ${snapshot.dmrcPath} is Session=$dmrcId.');
+    parts.add('LightDM ${snapshot.dmrcPath} is Session=$dmrcId.');
   }
   final saved = snapshot.saved;
   if (saved != null) {
@@ -312,8 +399,7 @@ String describeSnapshot(SessionSnapshot snapshot) {
 }
 
 String describeSwitch(SwitchResult result) {
-  return 'Wrote ${result.sessionLine} to ${result.dmrcPath}. '
-      'Saved ${result.session.name} (${result.session.type.label}) in '
-      '${result.appStatePath}. This applies at the next login. '
-      'You stay signed in.';
+  return '${result.reports.join('\n')}\n'
+      'Log out and back in for this to take effect. '
+      'You stay signed in until you do.';
 }

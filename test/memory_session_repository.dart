@@ -45,11 +45,20 @@ class MemorySessionRepository implements SessionRepository {
       dmrcPath: dmrcPath,
       updatedAt: DateTime.utc(2026, 11, 15),
     );
+    final sessionType = session.type == SessionType.wayland ? 'wayland' : 'x11';
     return SwitchResult(
       session: session,
       dmrcPath: dmrcPath,
       appStatePath: appStatePath,
       sessionLine: 'Session=${session.id}',
+      accountsUpdated: true,
+      reports: [
+        'Wrote Session=${session.id} to $dmrcPath for LightDM.',
+        'Wrote Session=${session.id}, XSession=${session.id}, and '
+            'SessionType=$sessionType to /var/lib/AccountsService/users/tester '
+            'for GDM.',
+        'Saved ${session.name} (${session.type.label}) in $appStatePath.',
+      ],
     );
   }
 }

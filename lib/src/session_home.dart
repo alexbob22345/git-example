@@ -1,5 +1,6 @@
 import 'package:material_ui/material_ui.dart';
 
+import 'accounts_user.dart';
 import 'build_info.dart';
 import 'desktop_session.dart';
 import 'kernel_button.dart';
@@ -90,7 +91,8 @@ class _SessionHomeState extends State<SessionHome> {
           title: const Text('Switch session'),
           content: Text(
             'Use ${session.name} (${session.type.label}) the next time you '
-            'log in? You stay signed in, and this machine will not reboot.',
+            'log in? Log out and back in for it to take effect. You stay '
+            'signed in, and this machine will not reboot.',
           ),
           actions: [
             TextButton(
@@ -125,7 +127,15 @@ class _SessionHomeState extends State<SessionHome> {
             dmrcPath: result.dmrcPath,
             updatedAt: DateTime.now(),
           ),
-          dmrcSessionId: session.id,
+          dmrcSessionId: result.dmrcWritten
+              ? session.id
+              : snapshot.dmrcSessionId,
+          accountsSessionId: result.accountsUpdated
+              ? session.id
+              : snapshot.accountsSessionId,
+          accountsSessionType: result.accountsUpdated
+              ? accountsSessionType(session.type)
+              : snapshot.accountsSessionType,
           dmrcPath: result.dmrcPath,
           appStatePath: result.appStatePath,
         );
