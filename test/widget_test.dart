@@ -2,7 +2,7 @@ import 'package:change_gui/main.dart';
 import 'package:change_gui/src/desktop_session.dart';
 import 'package:change_gui/src/session_repository.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:material_ui/material_ui.dart';
+import 'package:flutter/material.dart';
 
 import 'memory_session_repository.dart';
 

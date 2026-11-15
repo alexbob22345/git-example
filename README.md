@@ -4,7 +4,7 @@ Flutter Linux app that lists the desktop sessions installed on this machine and 
 
 ## Run
 
-Install Flutter with Linux desktop enabled, then from this directory:
+Install Flutter 3.24 or newer with Linux desktop enabled, then from this directory:
 
 ```bash
 flutter run -d linux
