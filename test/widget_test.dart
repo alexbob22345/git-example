@@ -107,7 +107,9 @@ void main() {
       find.textContaining('Wrote Session=plasma to /tmp/change-gui-home/.dmrc'),
       findsOneWidget,
     );
+    expect(find.textContaining('Log out and back in'), findsOneWidget);
     expect(find.textContaining('You stay signed in'), findsOneWidget);
+    expect(find.textContaining('for GDM'), findsOneWidget);
     expect(find.byKey(const Key('current-wayland:plasma')), findsOneWidget);
   });
 

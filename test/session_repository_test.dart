@@ -1,9 +1,44 @@
 import 'dart:io';
 
+import 'package:change_gui/src/accounts_service.dart';
 import 'package:change_gui/src/desktop_session.dart';
 import 'package:change_gui/src/dmrc.dart';
 import 'package:change_gui/src/session_repository.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+class RecordingAccounts implements AccountsSessionPort {
+  String? sessionId;
+  SessionType? type;
+  bool fail = false;
+
+  @override
+  Future<AccountsSessionState?> read() async => null;
+
+  @override
+  Future<AccountsWriteResult> write({
+    required String sessionId,
+    required SessionType type,
+  }) async {
+    this.sessionId = sessionId;
+    this.type = type;
+    const path = '/var/lib/AccountsService/users/tester';
+    if (fail) {
+      return const AccountsWriteResult(
+        path: path,
+        succeeded: false,
+        message: 'Could not update $path for GDM: permission denied.',
+      );
+    }
+    final sessionType = type == SessionType.wayland ? 'wayland' : 'x11';
+    return AccountsWriteResult(
+      path: path,
+      succeeded: true,
+      message:
+          'Wrote Session=$sessionId, XSession=$sessionId, and '
+          'SessionType=$sessionType to $path for GDM.',
+    );
+  }
+}
 
 void main() {
   late Directory root;
@@ -38,6 +73,9 @@ Type=Application
     }
   });
 
+  final accounts = RecordingAccounts();
+  var sddmPresent = false;
+
   FilesystemSessionRepository repository() {
     return FilesystemSessionRepository(
       x11Directories: ['${root.path}/xsessions'],
@@ -46,6 +84,9 @@ Type=Application
       appStatePath: '${root.path}/config/change_gui/selection.json',
       locale: 'en_US.UTF-8',
       clock: () => DateTime.utc(2026, 11, 15, 18),
+      accounts: accounts,
+      sddmStateExists: () => sddmPresent,
+      sddmStatePath: '${root.path}/sddm/state.conf',
     );
   }
 
@@ -77,9 +118,14 @@ Type=Application
     expect(reloaded.saved?.name, 'Xfce Session');
     expect(reloaded.saved?.type, SessionType.x11);
     expect(initialSelection(reloaded)?.id, 'xfce');
+    expect(accounts.sessionId, 'xfce');
+    expect(accounts.type, SessionType.x11);
     expect(describeSwitch(result), contains('Session=xfce'));
     expect(describeSwitch(result), contains(result.appStatePath));
+    expect(describeSwitch(result), contains('for GDM'));
+    expect(describeSwitch(result), contains('Log out and back in'));
     expect(describeSwitch(result), contains('You stay signed in'));
+    expect(describeSwitch(result), isNot(contains('state.conf')));
   });
 
   test(
@@ -108,8 +154,31 @@ Type=Application
       waylandDirectories: ['${root.path}/missing-w'],
       dmrcPath: '${root.path}/home/.dmrc',
       appStatePath: '${root.path}/config/change_gui/selection.json',
+      accounts: RecordingAccounts(),
+      sddmStateExists: () => false,
     );
     final snapshot = await repo.load();
     expect(snapshot.sessions, isEmpty);
+  });
+
+  test('a failed GDM update still writes LightDM and names both', () async {
+    accounts.fail = true;
+    sddmPresent = true;
+    final result = await repository().switchTo(
+      DesktopSession(
+        id: 'xfce',
+        name: 'Xfce Session',
+        type: SessionType.x11,
+        sourcePath: '${root.path}/xsessions/xfce.desktop',
+      ),
+    );
+    final text = describeSwitch(result);
+    expect(result.dmrcWritten, isTrue);
+    expect(result.accountsUpdated, isFalse);
+    expect(text, contains('for LightDM'));
+    expect(text, contains('Could not update'));
+    expect(text, contains('for GDM'));
+    expect(text, contains('Left ${root.path}/sddm/state.conf unchanged'));
+    expect(text, contains('Log out and back in'));
   });
 }
