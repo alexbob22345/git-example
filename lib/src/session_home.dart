@@ -1,4 +1,4 @@
-import 'package:material_ui/material_ui.dart';
+import 'package:flutter/material.dart';
 
 import 'build_info.dart';
 import 'desktop_session.dart';
@@ -196,41 +196,39 @@ class _SessionHomeState extends State<SessionHome> {
     if (sessions.isEmpty) {
       return const _EmptySessions();
     }
-    return RadioGroup<String>(
-      groupValue: _pickedKey,
-      onChanged: (value) {
-        if (value == null) {
-          return;
-        }
-        setState(() => _pickedKey = value);
+    return ListView.separated(
+      key: const Key('session-list'),
+      itemCount: sessions.length,
+      separatorBuilder: (context, index) => const Divider(height: 1),
+      itemBuilder: (context, index) {
+        final session = sessions[index];
+        final current = _isCurrent(session);
+        return RadioListTile<String>(
+          key: Key('session-${session.selectionKey}'),
+          value: session.selectionKey,
+          groupValue: _pickedKey,
+          onChanged: (value) {
+            if (value == null) {
+              return;
+            }
+            setState(() => _pickedKey = value);
+          },
+          selected: _pickedKey == session.selectionKey,
+          controlAffinity: ListTileControlAffinity.leading,
+          title: Text(session.name),
+          subtitle: Text('${session.type.label} · ${session.id}'),
+          secondary: current
+              ? Text(
+                  'Current',
+                  key: Key('current-${session.selectionKey}'),
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.primary,
+                    fontWeight: FontWeight.w600,
+                  ),
+                )
+              : null,
+        );
       },
-      child: ListView.separated(
-        key: const Key('session-list'),
-        itemCount: sessions.length,
-        separatorBuilder: (context, index) => const Divider(height: 1),
-        itemBuilder: (context, index) {
-          final session = sessions[index];
-          final current = _isCurrent(session);
-          return RadioListTile<String>(
-            key: Key('session-${session.selectionKey}'),
-            value: session.selectionKey,
-            selected: _pickedKey == session.selectionKey,
-            controlAffinity: ListTileControlAffinity.leading,
-            title: Text(session.name),
-            subtitle: Text('${session.type.label} · ${session.id}'),
-            secondary: current
-                ? Text(
-                    'Current',
-                    key: Key('current-${session.selectionKey}'),
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.primary,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  )
-                : null,
-          );
-        },
-      ),
     );
   }
 }

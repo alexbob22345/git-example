@@ -13,6 +13,10 @@ analyzer:
   exclude:
     - build/**
     - linux/**
+  errors:
+    # material.dart and RadioListTile.groupValue are deprecated on newer
+    # Flutter releases and are the supported API on older ones.
+    deprecated_member_use: ignore
 
 linter:
   # The lint rules applied to this project can be customized in the
